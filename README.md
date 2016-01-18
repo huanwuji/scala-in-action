@@ -1,10 +1,10 @@
 # scala-in-action
 ## function
-def test=println("aa")
-val x = 1
+
+def test = println("aa")
 x.map(_+_)
-x.map(x => x+1)
-x.map{x => x+1}
+x.map(x => x+x)
+x.map{x => x+x}
 x.map {
   case x:Int => 1
   case _ => 1
@@ -15,11 +15,14 @@ type Handler = Int => Long
 def test(a:Int)(handler:Int => Long)
 
 case class User(id:Int, name:String)
-trait
+
+##trait
 trait Service {
     def find(id:Int):User
  }
 class ServiceImpl extend Service
+
+##object
 object {
     def apply() = new ServiceImpl
 }
@@ -31,15 +34,16 @@ x match {
    case _
 }
 
-Variances
+##Variances
 trait Animal[+T]
 
 ## type bounds
 def test[A <: Any](a:A)
 def test[A >: Any](a:A)
 
-compound types
+##compound types
+val objectMapper = new ObjectMapper() with ScalaObjectMapper
 
-typed self
+##typed self
 
-implicit
+##implicit
