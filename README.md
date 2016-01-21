@@ -35,11 +35,11 @@ x match {
 }
 
 ##Variances
-trait Animal[+T]
+`trait Animal[+T]`
 
 ## type bounds
-def test[A <: Any](a:A)
-def test[A >: Any](a:A)
+`def test[A <: Any](a:A)`
+`def test[A >: Any](a:A)`
 
 ##compound types
 val objectMapper = new ObjectMapper() with ScalaObjectMapper

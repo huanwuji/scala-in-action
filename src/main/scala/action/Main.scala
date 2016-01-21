@@ -3,14 +3,19 @@ package action
 import java.sql.ResultSet
 import javax.sql.DataSource
 
-import akka.actor.ActorSystem
+import akka.actor.{Actor, ActorSystem, Props}
 import akka.event.LoggingAdapter
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.Source
+import akka.stream.actor.ActorPublisherMessage.Request
+import akka.stream.actor.ActorSubscriberMessage.OnNext
+import akka.stream.actor.{ActorPublisher, ActorSubscriber, OneByOneRequestStrategy, RequestStrategy}
+import akka.stream.scaladsl.{Flow, Sink, Source}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.fasterxml.jackson.module.scala.experimental.ScalaObjectMapper
 import com.zaxxer.hikari.HikariDataSource
+
+import scala.annotation.tailrec
 
 /**
  * Author: kui.dai
@@ -30,16 +35,7 @@ trait IdEntity {
   val id: Long
 }
 
-case class User(id: Long, name: String, sex: Int, age: Int, mobile: String) extends IdEntity {
-  //Not recommend
-  def this(rs: ResultSet) {
-    this(id = rs.getLong("id"),
-      name = rs.getString("name"),
-      sex = rs.getInt("sex"),
-      age = rs.getInt("age"),
-      mobile = rs.getString("mobile"))
-  }
-}
+case class User(id: Long, name: String, sex: Int, age: Int, mobile: String) extends IdEntity
 
 object User {
   def apply(rs: ResultSet): User = {
@@ -59,9 +55,9 @@ trait JdbcTemplate[T <: IdEntity] extends Resources {
   val tableName: String
   val beanMapper: BeanMapper
 
-  def find(id: String)(implicit dataSource: DataSource): Iterator[T] = query(s"select * from $tableName where id=$id", beanMapper)
+  def find(id: String)(implicit dataSource: DataSource): Seq[T] = query(s"select * from $tableName where id=$id", beanMapper)
 
-  def query[A](sql: String, mapper: ResultSet ⇒ A)(implicit dataSource: DataSource): Iterator[A] =
+  def query[A](sql: String, mapper: ResultSet ⇒ A)(implicit dataSource: DataSource): Seq[A] =
     using(dataSource.getConnection) {
       conn ⇒ using(conn.prepareStatement(sql)) {
         ps ⇒ using(ps.executeQuery()) {
@@ -69,7 +65,7 @@ trait JdbcTemplate[T <: IdEntity] extends Resources {
             override def hasNext: Boolean = rs.next()
 
             override def next(): A = mapper(rs)
-          }
+          }.toIndexedSeq
         }
       }
     }
@@ -77,7 +73,7 @@ trait JdbcTemplate[T <: IdEntity] extends Resources {
 
 trait Pager[A <: IdEntity] {
   template: JdbcTemplate[A] ⇒
-  def pageQuery(start: Int, pageSize: Int, pageSql: (Int, Int) ⇒ String)(implicit dataSource: DataSource): Iterator[A] =
+  def pageQuery(start: Int, pageSize: Int, pageSql: (Int, Int) ⇒ String)(implicit dataSource: DataSource): Seq[A] =
     template.query(pageSql(start, pageSize), beanMapper)
 }
 
@@ -95,7 +91,7 @@ object UserService {
 trait JsonProtocol {
   val objectMapper = new ObjectMapper() with ScalaObjectMapper registerModule DefaultScalaModule
 
-  implicit def userToCsv(user: User): String = objectMapper.writeValueAsString(user)
+  implicit def userToJson(user: User): String = objectMapper.writeValueAsString(user)
 }
 
 object Main extends App with JsonProtocol {
@@ -107,6 +103,33 @@ object Main extends App with JsonProtocol {
   dataSource.setUsername("admin")
   dataSource.setPassword("admin123")
   val userService = UserService()
-  val data = Iterator.from(1, 10).flatMap(userService.pageQuery(_, 100, (pageNum, pageSize) ⇒ s"select * from user limit $pageNum,$pageSize"))
-  Source(() ⇒ data).runForeach(println)
+  val data = Iterator.from(0, 10).flatMap(userService.pageQuery(_, 100, (pageNum, pageSize) ⇒ s"select * from user limit $pageNum,$pageSize"))
+  val toJson = Flow[User].map(_.toUpperCase)
+  Source.actorPublisher(Props(classOf[Publisher], data)) via toJson runWith Sink.actorSubscriber(Props[Subscriber])
+}
+
+class Publisher(data: Iterator[String]) extends ActorPublisher[String] {
+  override def receive: Receive = {
+    case Request(n) ⇒ delivery(n)
+  }
+
+  @tailrec
+  final def delivery(n: Long): Unit = {
+    if (n > 0) {
+      if (data.hasNext) {
+        onNext(data.next())
+        delivery(n - 1)
+      } else {
+        onCompleteThenStop()
+      }
+    }
+  }
+}
+
+class Subscriber extends ActorSubscriber {
+  override protected def requestStrategy: RequestStrategy = OneByOneRequestStrategy
+
+  override def receive: Actor.Receive = {
+    case OnNext(ele) ⇒ println(ele)
+  }
 }
